@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="robots" content="noindex, nofollow">
+
+    <title>(ETH/Base/XPL)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; padding: 20px; background: #f8f9fa; }
+        .card { background: white; padding: 24px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); width: 420px; }
+        .section { margin-bottom: 20px; border: 1px solid #eee; padding: 15px; border-radius: 10px; }
+        label { display: block; font-size: 12px; color: #666; margin-bottom: 5px; }
+        select, input { width: 100%; padding: 12px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+        button { width: 100%; padding: 14px; cursor: pointer; border: none; border-radius: 8px; font-weight: bold; color: white; background: #333; transition: 0.3s; }
+        button:hover { background: #000; }
+        #status { font-size: 13px; color: #555; margin-top: 15px; white-space: pre-wrap; word-break: break-all; padding: 10px; background: #fffde7; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h3>多链桥 c</h3>
+    
+    <div class="section">
+        <label>从 (源链)</label>
+        <select id="srcChain">
+            <option value="ETHEREUM">Ethereum Mainnet</option>
+            <option value="BASE">Base Mainnet</option>
+            <option value="XPL">Plasma (XPL)</option>
+        </select>
+
+        <label>到 (目标链)</label>
+        <select id="dstChain">
+            <option value="BASE">Base Mainnet</option>
+            <option value="ETHEREUM">Ethereum Mainnet</option>
+            <option value="XPL">Plasma (XPL)</option>
+        </select>
+    </div>
+
+    <div class="section">
+        <label>跨链数量 (msETH)</label>
+        <input type="number" id="amount" placeholder="0.0" step="0.001">
+        <button onclick="startBridge()">开始跨链交易</button>
+    </div>
+
+    <div id="status">状态: 等待操作...</div>
+</div>
+
+<script>
+    const statusEl = document.getElementById('status');
+
+    // 链配置信息 (请务必核对 XPL 的最新合约地址)
+    const CHAINS = {
+        ETHEREUM: {
+            chainId: '0x1',
+            chainName: 'Ethereum',
+            lzId: 101,
+            contract: "0xF37982E3F33ac007C690eD6266F3402d24aA27Ea",
+            // rpc: 'https://cloudflare-eth.com'
+        },
+        BASE: {
+            chainId: '0x2105', // 8453
+            chainName: 'Base',
+            lzId: 184,
+            contract: "0x2AF13BF84F8B452cB86839330F514Cc5c2899217",
+            // rpc: 'https://mainnet.base.org'
+        },
+        XPL: {
+            chainId: '0x2611', // 假设 XPL ChainID 为 349 (根据实际情况修改)
+            chainName: 'Plasma',
+            lzId: 383, // 示例 LayerZero ID，需根据 Metronome 官方文档确认
+            contract: "0xCBfa3f8a32ab63E461B6BBFda881ef01EB4eF75D", // 需补充实际地址
+            // rpc: 'https://rpc.xpl.network' // 需补充实际 RPC
+        }
+    };
+
+    const ABI = [
+        "function sendFrom(address _from, uint16 _dstChainId, address _to, uint256 _amount) public payable",
+        "function estimateSendFee(uint16 _dstChainId, bytes _toAddress, uint256 _amount, bool _useZro, bytes _adapterParams) public view returns (uint256 nativeFee, uint256 zroFee)"
+    ];
+
+    async function startBridge() {
+        const srcKey = document.getElementById('srcChain').value;
+        const dstKey = document.getElementById('dstChain').value;
+        const amount = document.getElementById('amount').value;
+
+        if (srcKey === dstKey) return alert("源链和目标链不能相同");
+        if (!amount || amount <= 0) return alert("请输入数量");
+        if (!window.ethereum) return alert("未检测到 MetaMask");
+
+        try {
+            const srcChain = CHAINS[srcKey];
+            const dstChain = CHAINS[dstKey];
+
+            // 1. 自动切换网络
+            statusEl.innerText = `正在切换至 ${srcChain.chainName}...`;
+            try {
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: srcChain.chainId }],
+                });
+            } catch (err) {
+                if (err.code === 4902) {
+                    await window.ethereum.request({
+                        method: 'wallet_addEthereumChain',
+                        params: [{
+                            chainId: srcChain.chainId,
+                            chainName: srcChain.chainName,
+                            rpcUrls: [srcChain.rpc],
+                            nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }
+                        }]
+                    });
+                } else throw err;
+            }
+
+            // 2. 初始化合约
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+            const userAddress = await signer.getAddress();
+            const contract = new ethers.Contract(srcChain.contract, ABI, signer);
+
+            const amountWei = ethers.parseEther(amount);
+            const addressBytes32 = ethers.zeroPadValue(userAddress, 32);
+
+            // 3. 估算 LayerZero 费用
+            statusEl.innerText = "正在估算跨链 Gas 费...";
+            const [nativeFee] = await contract.estimateSendFee(
+                dstChain.lzId,
+                addressBytes32,
+                amountWei,
+                false,
+                "0x"
+            );
+
+            // 4. 发起交易
+            statusEl.innerText = `估算费用: ${ethers.formatEther(nativeFee)} ETH\n正在请求钱包签名...`;
+            
+            const tx = await contract.sendFrom(
+                userAddress,
+                dstChain.lzId,
+                userAddress,
+                amountWei,
+                { value: nativeFee }
+            );
+
+            statusEl.innerText = `交易已发送！\nHash: ${tx.hash}\n等待确认...`;
+            await tx.wait();
+            statusEl.innerText = "跨链成功发起！请在目标链稍后查看。";
+
+        } catch (error) {
+            console.error(error);
+            statusEl.innerText = "失败: " + (error.reason || error.message);
+        }
+    }
+</script>
+
+</body>
+</html>
