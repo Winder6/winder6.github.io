@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>交易分析中心 v2.1</title>
+    <style>
+        :root {
+            --primary: #4f46e5; --bg: #f8fafc; --card-bg: #ffffff;
+            --text-main: #1e293b; --text-muted: #64748b; --border: #e2e8f0; --accent: #10b981;
+            --danger: #ef4444; --warning: #f59e0b;
+        }
+        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text-main); margin: 0; padding: 2rem; line-height: 1.5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        
+        .section { background: var(--card-bg); padding: 1.5rem; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid var(--border); margin-bottom: 2rem; }
+        textarea { width: 100%; height: 100px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: monospace; box-sizing: border-box; margin-bottom: 1rem; }
+        
+        .btn-group { display: flex; gap: 10px; align-items: center; }
+        button { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+        button.secondary { background: #6366f1; }
+        button.danger-outline { background: transparent; color: var(--danger); border: 1px solid var(--danger); padding: 4px 8px; font-size: 12px; border-radius: 4px; }
+        button.danger-outline:hover { background: var(--danger); color: white; }
+
+        .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+        .card { background: var(--bg); padding: 1.2rem; border-radius: 10px; border: 1px solid var(--border); }
+        .card .label { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+        .card .value { font-size: 1.3rem; font-weight: 700; margin-top: 5px; color: var(--text-main); }
+
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f1f5f9; padding: 12px; text-align: left; font-size: 0.85rem; color: var(--text-muted); }
+        td { padding: 10px 12px; border-top: 1px solid var(--border); font-size: 0.9rem; }
+        
+        .history-summary-card { background: #eef2ff; border: 1px solid #c7d2fe; }
+        .history-summary-card .value { color: #3730a3; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="section">
+        <h2 style="margin-top:0">🚀 实时数据分析</h2>
+        <textarea id="rawInput" placeholder="在此粘贴日志数据..."></textarea>
+        <div class="btn-group">
+            <button onclick="runAnalysis()">开始分析数据</button>
+            <button class="secondary" id="saveBtn" style="display:none" onclick="saveCurrentResult()">保存此结果到归档</button>
+        </div>
+
+        <div class="dashboard" id="statCards"></div>
+        
+        <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px;">
+            <table>
+                <thead>
+                    <tr><th>类型</th><th>收益(Gain)</th><th>数量</th><th>费用</th><th>费收比</th></tr>
+                </thead>
+                <tbody id="typeTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h2 style="margin:0">📂 归档历史汇总 (二次计算)</h2>
+            <button onclick="clearAllHistory()" style="background:#94a3b8; font-size: 12px;">清空全部记录</button>
+        </div>
+
+        <div class="dashboard">
+            <div class="card history-summary-card">
+                <div class="label">累计总收益</div>
+                <div id="histTotalGain" class="value">￥0.00</div>
+            </div>
+            <div class="card history-summary-card">
+                <div class="label">累计总净利</div>
+                <div id="histNetGain" class="value">￥0.00</div>
+            </div>
+            <div class="card history-summary-card">
+                <div class="label">累计总费用</div>
+                <div id="histTotalFee" class="value">￥0.00</div>
+            </div>
+            <div class="card history-summary-card">
+                <div class="label">累计总条数</div>
+                <div id="histTotalLines" class="value">0</div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr><th>时间</th><th>总收益</th><th>净收益</th><th>费用</th><th>占比</th><th>条数</th><th style="text-align:right">操作</th></tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let currentTask = null;
+
+    window.onload = renderHistory;
+
+    function runAnalysis() {
+        const s = document.getElementById('rawInput').value.trim();
+        if (!s) return;
+
+        const sArr = s.split(/\r?\n/);
+        const bMap = {};
+        let totalGain = 0, totalLine = 0, totalFee = 0;
+
+        sArr.forEach(line => {
+            const row = line.trim().split(/\s+/);
+            const bType = row[1];
+            let gain = parseFloat(row[row.length - 2]);
+            if(gain < -400) gain = 0;
+
+            if (bType && !isNaN(gain)) {
+                totalGain += gain;
+                totalLine++;
+                const fee = (parseFloat(row[3]) * parseFloat(row[7]) * 0.0006) || 0;
+                totalFee += fee;
+
+                if (!bMap[bType]) bMap[bType] = [0, 0, 0];
+                bMap[bType][0] += gain;
+                bMap[bType][1]++;
+                bMap[bType][2] += fee;
+            }
+        });
+
+        const feePercent = totalGain !== 0 ? ((totalFee / totalGain) * 100).toFixed(2) : "0.00";
+
+        currentTask = {
+            id: Date.now(),
+            time: new Date().toLocaleString(),
+            totalGain: totalGain,
+            totalFee: totalFee,
+            netGain: totalGain - totalFee,
+            totalLine: totalLine,
+            feePercent: feePercent
+        };
+
+        document.getElementById('saveBtn').style.display = 'inline-block';
+        renderLiveCards(currentTask);
+        renderTypeTable(bMap);
+    }
+
+    function renderLiveCards(task) {
+        document.getElementById('statCards').innerHTML = `
+            <div class="card"><div class="label">当前总收益</div><div class="value">￥${task.totalGain.toFixed(2)}</div></div>
+            <div class="card"><div class="label">当前净收益</div><div class="value" style="color:var(--accent)">￥${task.netGain.toFixed(2)}</div></div>
+            <div class="card"><div class="label">当前费用</div><div class="value" style="color:var(--danger)">￥${task.totalFee.toFixed(2)}</div></div>
+            <div class="card"><div class="label">费用占比</div><div class="value" style="color:var(--warning)">${task.feePercent}%</div></div>
+            <div class="card"><div class="label">总条数</div><div class="value">${task.totalLine}</div></div>
+        `;
+    }
+
+    function renderTypeTable(bMap) {
+        const sorted = Object.keys(bMap).map(k => ({
+            type: k, gain: bMap[k][0], num: bMap[k][1], fee: bMap[k][2]
+        })).sort((a, b) => b.gain - a.gain);
+
+        document.getElementById('typeTableBody').innerHTML = sorted.map(item => `
+            <tr>
+                <td><b>${item.type}</b></td>
+                <td style="color:${item.gain >=0 ? '#10b981':'#ef4444'}">${item.gain.toFixed(2)}</td>
+                <td>${item.num}</td>
+                <td>${item.fee.toFixed(2)}</td>
+                <td>${(item.gain !== 0 ? item.fee/item.gain : 0).toFixed(4)}</td>
+            </tr>
+        `).join('');
+    }
+
+    function saveCurrentResult() {
+        if (!currentTask) return;
+        const history = JSON.parse(localStorage.getItem('trade_history_v3') || '[]');
+        history.push(currentTask);
+        localStorage.setItem('trade_history_v3', JSON.stringify(history));
+        currentTask = null;
+        document.getElementById('saveBtn').style.display = 'none';
+        renderHistory();
+    }
+
+    function deleteRecord(id) {
+        let history = JSON.parse(localStorage.getItem('trade_history_v3') || '[]');
+        history = history.filter(item => item.id !== id);
+        localStorage.setItem('trade_history_v3', JSON.stringify(history));
+        renderHistory();
+    }
+
+    function renderHistory() {
+        const history = JSON.parse(localStorage.getItem('trade_history_v3') || '[]');
+        const tbody = document.getElementById('historyBody');
+        
+        let hGain = 0, hNet = 0, hFee = 0, hLines = 0;
+
+        tbody.innerHTML = [...history].reverse().map(item => {
+            hGain += item.totalGain;
+            hNet += item.netGain;
+            hFee += item.totalFee;
+            hLines += (item.totalLine || 0);
+
+            return `
+                <tr>
+                    <td style="color:var(--text-muted); font-size:12px;">${item.time}</td>
+                    <td>${item.totalGain.toFixed(2)}</td>
+                    <td style="font-weight:bold">${item.netGain.toFixed(2)}</td>
+                    <td>${item.totalFee.toFixed(2)}</td>
+                    <td>${(item.totalFee/item.totalGain*100).toFixed(2)}%</td>
+
+                    <td>${item.totalLine || 0}</td>
+                    <td style="text-align:right">
+                        <button class="danger-outline" onclick="deleteRecord(${item.id})">删除</button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        document.getElementById('histTotalGain').innerText = `￥${hGain.toFixed(2)}`;
+        document.getElementById('histNetGain').innerText = `￥${hNet.toFixed(2)}`;
+        document.getElementById('histTotalFee').innerText = `￥${hFee.toFixed(2)}`;
+        document.getElementById('histTotalLines').innerText = hLines;
+    }
+
+    function clearAllHistory() {
+        if(confirm('确定清空所有历史记录吗？')) {
+            localStorage.removeItem('trade_history_v3');
+            renderHistory();
+        }
+    }
+</script>
+
+</body>
+</html>
