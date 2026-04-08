@@ -67,15 +67,15 @@
         <div class="dashboard">
             <div class="card history-summary-card">
                 <div class="label">累计总收益</div>
-                <div id="histTotalGain" class="value">￥0.00</div>
+                <div id="histTotalGain" class="value">0.00</div>
             </div>
             <div class="card history-summary-card">
                 <div class="label">累计总净利</div>
-                <div id="histNetGain" class="value">￥0.00</div>
+                <div id="histNetGain" class="value">0.00</div>
             </div>
             <div class="card history-summary-card">
                 <div class="label">累计总费用</div>
-                <div id="histTotalFee" class="value">￥0.00</div>
+                <div id="histTotalFee" class="value">0.00</div>
             </div>
             <div class="card history-summary-card">
                 <div class="label">累计总条数</div>
@@ -143,9 +143,9 @@
 
     function renderLiveCards(task) {
         document.getElementById('statCards').innerHTML = `
-            <div class="card"><div class="label">当前总收益</div><div class="value">￥${task.totalGain.toFixed(2)}</div></div>
-            <div class="card"><div class="label">当前净收益</div><div class="value" style="color:var(--accent)">￥${task.netGain.toFixed(2)}</div></div>
-            <div class="card"><div class="label">当前费用</div><div class="value" style="color:var(--danger)">￥${task.totalFee.toFixed(2)}</div></div>
+            <div class="card"><div class="label">当前总收益</div><div class="value">${task.totalGain.toFixed(2)}</div></div>
+            <div class="card"><div class="label">当前净收益</div><div class="value" style="color:var(--accent)">${task.netGain.toFixed(2)}</div></div>
+            <div class="card"><div class="label">当前费用</div><div class="value" style="color:var(--danger)">${task.totalFee.toFixed(2)}</div></div>
             <div class="card"><div class="label">费用占比</div><div class="value" style="color:var(--warning)">${task.feePercent}%</div></div>
             <div class="card"><div class="label">总条数</div><div class="value">${task.totalLine}</div></div>
         `;
@@ -212,9 +212,9 @@
             `;
         }).join('');
 
-        document.getElementById('histTotalGain').innerText = `￥${hGain.toFixed(2)}`;
-        document.getElementById('histNetGain').innerText = `￥${hNet.toFixed(2)}`;
-        document.getElementById('histTotalFee').innerText = `￥${hFee.toFixed(2)}`;
+        document.getElementById('histTotalGain').innerText = `${hGain.toFixed(2)}`;
+        document.getElementById('histNetGain').innerText = `${hNet.toFixed(2)}`;
+        document.getElementById('histTotalFee').innerText = `${hFee.toFixed(2)}`;
         document.getElementById('histTotalLines').innerText = hLines;
     }
 
