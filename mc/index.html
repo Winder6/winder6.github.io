@@ -76,7 +76,7 @@
     };
 
     const ABI = [
-        "function sendFrom(address _from, uint16 _dstChainId, address _to, uint256 _amount) public payable",
+        "function sendFrom(address _from,uint16 _dstChainId,bytes _toAddress,uint256 _amount,address _refundAddress,address _zroPaymentAddress,bytes _adapterParams) public payable",
         "function estimateSendFee(uint16 _dstChainId, bytes _toAddress, uint256 _amount, bool _useZro, bytes _adapterParams) public view returns (uint256 nativeFee, uint256 zroFee)"
     ];
 
@@ -130,7 +130,7 @@
                 addressBytes32,
                 amountWei,
                 false,
-                "0x"
+                "0x00010000000000000000000000000000000000000000000000000000000000030d40"
             );
 
             // 4. 发起交易
@@ -141,6 +141,9 @@
                 dstChain.lzId,
                 userAddress,
                 amountWei,
+                userAddress,
+                '0x0000000000000000000000000000000000000000',
+                '0x00010000000000000000000000000000000000000000000000000000000000030d40',
                 { value: nativeFee }
             );
 
