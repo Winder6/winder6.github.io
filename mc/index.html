@@ -28,6 +28,8 @@
             <option value="ETHEREUM">Ethereum Mainnet</option>
             <option value="BASE">Base Mainnet</option>
             <option value="XPL">Plasma (XPL)</option>
+            <option value="OP">OP</option>
+
         </select>
 
         <label>到 (目标链)</label>
@@ -35,6 +37,8 @@
             <option value="BASE">Base Mainnet</option>
             <option value="ETHEREUM">Ethereum Mainnet</option>
             <option value="XPL">Plasma (XPL)</option>
+            <option value="OP">OP</option>
+
         </select>
     </div>
 
@@ -71,6 +75,13 @@
             chainName: 'Plasma',
             lzId: 383, // 示例 LayerZero ID，需根据 Metronome 官方文档确认
             contract: "0xCBfa3f8a32ab63E461B6BBFda881ef01EB4eF75D", // 需补充实际地址
+            // rpc: 'https://rpc.xpl.network' // 需补充实际 RPC
+        },
+              OP: {
+            chainId: '0xa', // 假设 XPL ChainID 为 349 (根据实际情况修改)
+            chainName: 'Op',
+            lzId: 111, // 示例 LayerZero ID，需根据 Metronome 官方文档确认
+            contract: "0xc2C433D36d7184192E442a243b351a9e3055FD5f", // 需补充实际地址
             // rpc: 'https://rpc.xpl.network' // 需补充实际 RPC
         }
     };
