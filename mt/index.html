@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manta Pacific 跨链提现救援工具 (终极修复版)</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9fafb; color: #333; }
+        .card { background: white; padding: 24px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h2 { margin-top: 0; color: #111827; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; font-family: monospace; }
+        button { background: #3b82f6; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 10px; }
+        button:hover { background: #2563eb; }
+        button:disabled { background: #9ca3af; cursor: not-allowed; }
+        #log-box { margin-top: 20px; background: #1f2937; color: #10b981; padding: 16px; border-radius: 6px; font-family: monospace; font-size: 14px; white-space: pre-wrap; height: 350px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Manta 跨链救援 (L1 Ethereum)</h2>
+    <p>请确保钱包已连接至 <strong>以太坊主网 (Ethereum Mainnet)</strong>。</p>
+    
+    <label for="txHash">Manta Pacific 跨链交易哈希 (L2 Tx Hash):</label>
+    <input type="text" id="txHash" placeholder="例如: 0x123abc..." />
+    
+    <button id="actionBtn">连接钱包并执行跨链操作</button>
+</div>
+
+<div id="log-box">等待操作...</div>
+
+<script type="module">
+    import { createPublicClient, createWalletClient, custom, http } from 'https://esm.sh/viem@2.x';
+    // 引入原始 manta 配置
+    import { mainnet, manta as viemManta } from 'https://esm.sh/viem@2.x/chains';
+    import { publicActionsL1, publicActionsL2, walletActionsL1, getWithdrawals } from 'https://esm.sh/viem@2.x/op-stack';
+
+    // -----------------------------------------------------
+    // 🔧 核心修复：强行补齐 viem 缺失的 Manta L1 合约配置
+    // -----------------------------------------------------
+    const MANTA_PORTAL = '0x9168765EE952de7C6f8fC6FaD5Ec209B960b7622';
+    const MANTA_ORACLE = '0x30c789674ad3B458886BBC9abf42EEe19EA05C1D';
+
+    const manta = {
+        ...viemManta,
+        contracts: {
+            ...viemManta.contracts,
+            portal: {
+                1: { address: MANTA_PORTAL } // 1 表示部署在以太坊主网
+            },
+            l2OutputOracle: {
+                1: { address: MANTA_ORACLE }
+            }
+        }
+    };
+
+    const actionBtn = document.getElementById('actionBtn');
+    const txHashInput = document.getElementById('txHash');
+    const logBox = document.getElementById('log-box');
+
+    function log(message) {
+        console.log(message);
+        logBox.textContent += `\n> ${message}`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    actionBtn.addEventListener('click', async () => {
+        const L2_TX_HASH = txHashInput.value.trim();
+        if (!L2_TX_HASH) { alert('请输入哈希'); return; }
+
+        if (!window.ethereum) { log('❌ 未检测到钱包插件'); return; }
+
+        try {
+            actionBtn.disabled = true;
+            log('正在请求连接钱包...');
+            
+            const [account] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            log(`✅ 钱包已连接: ${account}`);
+
+            const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+            if (parseInt(chainId, 16) !== 1) {
+                log('⚠️ 请在钱包中切换到以太坊主网 (Mainnet)！');
+                return;
+            }
+
+            // 初始化客户端
+            const publicClientL1 = createPublicClient({ chain: mainnet, transport: custom(window.ethereum) }).extend(publicActionsL1());
+            const walletClientL1 = createWalletClient({ account, chain: mainnet, transport: custom(window.ethereum) }).extend(walletActionsL1());
+            // 注意这里使用的是打完补丁的 manta 对象
+            const publicClientL2 = createPublicClient({ chain: manta, transport: http() }).extend(publicActionsL2());
+
+            log(`正在读取 Manta 交易凭证...`);
+            const receipt = await publicClientL2.getTransactionReceipt({ hash: L2_TX_HASH });
+            
+            const [withdrawal] = getWithdrawals(receipt);
+            if (!withdrawal) { log('❌ 未能在该交易中解析到跨链提现数据。'); return; }
+
+            log('正在查询 L1 跨链桥状态...');
+            // 因为传入了打补丁的 manta，这里不需要再手动塞 portalAddress 了
+            const status = await publicClientL1.getWithdrawalStatus({
+                receipt,
+                targetChain: manta 
+            });
+            
+            log(`[当前状态]: ${status}`);
+
+            if (status === 'ready-to-prove') {
+                log('🟢 状态就绪: 正在获取 L1 上的状态根 (L2 Output Proposal)...');
+                
+                // 🔧 修复报错：必须先获取 Output 才能构建 Proof
+                const output = await publicClientL1.getL2Output({
+                    l2BlockNumber: receipt.blockNumber,
+                    targetChain: manta
+                });
+                
+                log(`✅ 已获取对应状态根，Output Index: ${output.outputIndex}`);
+                log('正在生成 Merkle 包含证明...');
+
+                const args = await publicClientL2.buildProveWithdrawal({
+                    account,
+                    withdrawal,
+                    output // 传入 output，解决 game ?? output 解构报错
+                });
+
+                log('唤起钱包签名 Prove 交易...');
+                const hash = await walletClientL1.proveWithdrawal(args);
+                log(`🎉 Prove 交易已提交！TX Hash: ${hash}`);
+                log('⚠️ 请等待 3-7 天挑战期结束，状态变为 ready-to-finalize 后再次运行此工具执行最终提现。');
+            } 
+            
+            else if (status === 'ready-to-finalize') {
+                log('🟢 挑战期已过: 准备执行最终提现...');
+                log('唤起钱包签名 Finalize (提现) 交易...');
+                
+                const hash = await walletClientL1.finalizeWithdrawal({
+                    account,
+                    targetChain: manta, // 补丁配置会在这里自动提供 portal 地址
+                    withdrawal
+                });
+                log(`🎉 提现成功！资金正在转入钱包。TX Hash: ${hash}`);
+            } 
+            
+            else if (status === 'waiting-to-prove') { log('⏳ L2 状态根尚未同步到 L1 主网，请稍后再试。'); }
+            else if (status === 'waiting-to-finalize') { log('⏳ 挑战期进行中，请继续等待。'); }
+            else if (status === 'finalized') { log('✅ 该笔跨链已彻底完成，资金已到账。'); }
+
+        } catch (error) {
+            log(`❌ 发生错误: ${error.message || error}`);
+            console.error(error);
+        } finally {
+            actionBtn.disabled = false;
+        }
+    });
+</script>
+</body>
+</html>
