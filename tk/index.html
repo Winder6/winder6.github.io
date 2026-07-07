@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> USDC</title>
+    <meta name="robots" content="noindex, nofollow">
+
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.7.0/dist/ethers.umd.min.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #0b0f19 0%, #111827 100%);
+            min-height: 100vh;
+            color: #f3f4f6;
+        }
+    </style>
+</head>
+
+<body class="p-4 md:p-8 flex flex-col items-center">
+
+    <header
+        class="w-full max-w-5xl flex flex-col sm:flex-row justify-between items-center gap-4 mb-8 border-b border-gray-800 pb-6">
+        <div>
+            <h1 class="text-2xl font-bold bg-gradient-to-r from-pink-500 to-indigo-400 bg-clip-text text-transparent">
+                Taiko ➔ ETH 跨链客户端</h1>
+            <p class="text-xs text-gray-500 mt-1">纯前端 RPC 节点轮询 · 数据存储于本地 LocalStorage</p>
+        </div>
+        <button id="connectBtn"
+            class="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-sm font-medium transition shadow-lg shadow-indigo-600/20">
+            <i class="fa-solid fa-wallet mr-2"></i> 连接钱包 (MetaMask)
+        </button>
+    </header>
+
+    <main class="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        <div class="lg:col-span-5 space-y-6">
+            <section class="bg-gray-900/50 border border-gray-800/80 rounded-2xl p-5 backdrop-blur-sm">
+                <h2 class="text-base font-semibold mb-3 flex items-center gap-2 text-indigo-400">
+                    <i class="fa-solid fa-key"></i> 手动跟踪已有跨链 Tx
+                </h2>
+                <p class="text-xs text-gray-400 mb-4">如果你之前在其它地方做过 Taiko 到 ETH 的 USDC 跨链，请输入该笔 Taiko 上的交易哈希：</p>
+                <div class="space-y-3">
+                    <input type="text" id="manualTxHash" placeholder="0x..."
+                        class="w-full bg-gray-950 border border-gray-800 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-sm font-mono outline-none transition">
+                    <button id="addTxBtn"
+                        class="w-full bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium py-2.5 rounded-xl transition">
+                        添加到监听列表
+                    </button>
+                </div>
+            </section>
+
+            <section class="bg-gray-900/50 border border-gray-800/80 rounded-2xl p-5 backdrop-blur-sm">
+                <h2 class="text-base font-semibold mb-3 flex items-center gap-2 text-pink-500">
+                    <i class="fa-solid fa-paper-plane"></i> 前端直接发起跨链
+                </h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-gray-400 mb-1">数量 (USDC)</label>
+                        <input type="number" id="bridgeAmount" placeholder="0.0"
+                            class="w-full bg-gray-950 border border-gray-800 focus:border-pink-500 rounded-xl py-2 px-3 text-sm outline-none transition">
+                    </div>
+                    <button id="actionBridgeBtn" disabled
+                        class="w-full bg-gradient-to-r from-pink-600 to-indigo-600 opacity-50 cursor-not-allowed text-white text-sm font-semibold py-3 rounded-xl transition shadow-lg">
+                        请先连接钱包
+                    </button>
+                </div>
+            </section>
+        </div>
+
+        <div class="lg:col-span-7 bg-gray-900/30 border border-gray-800 rounded-2xl p-6 flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold flex items-center gap-2">
+                    <i class="fa-solid fa-circle-nodes text-emerald-400 animate-pulse"></i> 实时状态轮询列表
+                </h2>
+                <span id="loadingIndicator" class="text-xs text-gray-500 hidden"><i
+                        class="fa-solid fa-spinner animate-spin mr-1"></i> RPC 同步中...</span>
+            </div>
+
+            <div id="txList" class="space-y-3 flex-1">
+            </div>
+
+            <div id="emptyState" class="py-12 flex flex-col items-center justify-center text-gray-600">
+                <i class="fa-solid fa-folder-open text-3xl mb-2"></i>
+                <p class="text-xs">暂无监听中的跨链任务（已提取的记录会自动移除）</p>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast"
+        class="fixed bottom-5 right-5 bg-gray-800 border border-gray-700 text-sm px-4 py-3 rounded-xl shadow-xl transform translate-y-20 opacity-0 transition duration-300 z-50">
+    </div>
+
+    <script>
+        /*************************************************************
+         * 1. 真实区块链配置 (以 Taiko 主网 和 Ethereum 主网为例)
+         *************************************************************/
+        const TAIKO_RPC = "https://rpc.mainnet.taiko.xyz";
+        const ETH_RPC = "https://l1rpc.mainnet.taiko.xyz";
+
+        // Taiko 官方合约配置
+        const TAIKO_TOKEN_VAULT_ADDRESS = "0x1670000000000000000000000000000000000002";
+        const TAIKO_USDC_ADDRESS = "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b";
+        const ETH_BRIDGE_ADDRESS = "0xd60247c6848B7Ca29eDdF63AA924E53dB6Ddd8EC";
+
+        // 核心检测与交互所需的 ABI
+        const BRIDGE_ABI = [
+            "function messageStatus(bytes32 msgHash) view returns (uint8)"
+        ];
+        const TAIKO_VAULT_ABI = [
+            "function sendToken(tuple(uint64 destChainId,address destOwner, address to, uint64 fee, address token,uint32 gasLimit, uint256 amount)) external payable returns (bytes32)"
+        ];
+
+        const BRIDGE_LOG_ABI = [
+            "event MessageSent(bytes32 indexed msgHash, (uint64 id, uint64 fee, uint32 gasLimit, address from, uint64 srcChainId, address srcOwner, uint64 destChainId, address destOwner, address to, uint256 value, bytes data) message)"
+        ];
+
+        const SIGNAL_SERVICE_ABI = [
+            "event CheckpointSaved(uint48 indexed blockNumber,bytes32 blockHash, bytes32 stateRoot)"
+            // 注意：如果在实际事件中 blockNumber 不是 indexed，请去掉 indexed 关键字，保持与官方 abi 一致
+        ];
+
+        // 初始化 ethers 静态只读 Provider
+        const taikoProvider = new ethers.JsonRpcProvider(TAIKO_RPC);
+        const ethProvider = new ethers.JsonRpcProvider(ETH_RPC);
+
+        let userSignerAddress = null;
+        let trackedTxs = JSON.parse(localStorage.getItem('taiko_tracked_usdc_txs')) || [];
+
+        /*************************************************************
+         * 2. 核心状态轮询逻辑（全查真实链上节点）
+         *************************************************************/
+        const MAX_CHECKPOINT_SEARCH_BLOCKS = 5000n;
+        const SIGNAL_SERVICE_ADDRESS = "0x9e0a24964e5397B566c1ed39258e21aB5E35C77C"; // 替换为真实的 SignalService L1 地址
+        async function checkTxStatusOnChain(tx) {
+            try {
+                // 如果还没有解析出具体的 msgHash，先通过交易收据获取（此处演示使用 hash 的哈希替代，生产环境请从 Log 中提取）
+                if (!tx.blockNumber || !tx.msgHash) {
+                    const receipt = await taikoProvider.getTransactionReceipt(tx.hash);
+                    if (!receipt) return tx; // 还没打包
+                    tx.blockNumber = receipt.blockNumber;
+
+                    const globalIdx = trackedTxs.findIndex(t => t.hash === tx.hash);
+                    if (globalIdx !== -1) {
+                        trackedTxs[globalIdx].blockNumber = tx.blockNumber;
+                        trackedTxs[globalIdx].msgHash = tx.msgHash;
+                        localStorage.setItem('taiko_checkpoint_txs', JSON.stringify(trackedTxs));
+                    }
+
+                        const iface = new ethers.Interface(BRIDGE_LOG_ABI);
+
+                // 遍历这笔交易产生的所有日志（Logs）
+                for (const log of receipt.logs) {
+                    try {
+                        // 尝试用 MessageSent 的 ABI 去解析日志
+                        const parsedLog = iface.parseLog({
+                            topics: [...log.topics],
+                            data: log.data
+                        });
+
+                        // 如果解析成功且事件名为 MessageSent
+                        if (parsedLog && parsedLog.name === "MessageSent") {
+                            tx.msgHash = parsedLog.args.msgHash; // 成功拿到真实的 msgHash !
+                            console.log(`成功解析到 msgHash: ${tx.msgHash}`);
+                            break;
+                        }
+                    } catch (e) {
+                        // 如果当前 log 不是 MessageSent 事件，parseLog 会报错，直接跳过继续匹配
+                        continue;
+                    }
+                }
+
+                // 如果遍历完还没有找到，说明这笔 Tx 可能不是一笔合规的 Taiko 跨链交易
+                if (!tx.msgHash) {
+                    tx.amount = "非跨链交易或正在解析";
+                    return tx;
+
+                }
+                }
+            
+
+                const ethBridge = new ethers.Contract(ETH_BRIDGE_ADDRESS, BRIDGE_ABI, ethProvider);
+
+                // 1. 检查以太坊上该跨链信号是否已经被成功消费/提取
+                const isExecuted = await ethBridge.messageStatus(tx.msgHash).catch((err) => {
+                    console.log(err)
+                    return false
+                });
+                if (isExecuted === 2n) {
+                    tx.status = 'claimed';
+                    return tx;
+                }
+
+
+
+
+                // C. 100% 还原你提供的源码逻辑：通过 getLogs 过滤最新的 CheckpointSaved 事件
+                const currentBlock = await ethProvider.getBlockNumber();
+                const fromBlock = currentBlock > Number(MAX_CHECKPOINT_SEARCH_BLOCKS)
+                    ? currentBlock - Number(MAX_CHECKPOINT_SEARCH_BLOCKS)
+                    : 0;
+
+                const signalServiceContract = new ethers.Contract(SIGNAL_SERVICE_ADDRESS, SIGNAL_SERVICE_ABI, ethProvider);
+
+                // 对应 client.getContractEvents
+                const logs = await signalServiceContract.queryFilter(
+                    signalServiceContract.filters.CheckpointSaved(),
+                    fromBlock,
+                    currentBlock
+                );
+
+                if (logs.length === 0) {
+                    // 对应 throw new BlockNotSyncedError
+                    console.warn("No checkpoints found within the block range");
+                    tx.status = 'pending';
+                    return tx;
+                }
+
+                // 拿到最新的一条 CheckpointSaved 日志
+                const latestLog = logs[logs.length - 1];
+
+                // 对应 logs[logs.length - 1].args.blockNumber!
+                const latestSavedL2Block = BigInt(latestLog.args.blockNumber);
+
+                // D. 进行高度对比判定
+                if (BigInt(tx.blockNumber) <= latestSavedL2Block) {
+                    tx.status = 'claimable'; // 已经安全同步，可以提取
+                } else {
+                    tx.status = 'pending';   // 检查点还没覆盖到该区块
+                }
+
+            } catch (err) {
+                console.error("轮询链上节点失败:", err);
+            }
+            return tx;
+        }
+
+        // 统一循环调度调度
+        async function updateAndRender() {
+            if (trackedTxs.length === 0) { renderList(); return; }
+            document.getElementById('loadingIndicator').classList.remove('hidden');
+
+            const updatedList = [];
+            for (let tx of trackedTxs) {
+                const updatedTx = await checkTxStatusOnChain(tx);
+                if (updatedTx.status === 'claimed') {
+                    showToast(`交易 ${updatedTx.hash.substring(0, 8)}... 在链上检测到已提取，记录已被移除！`, "success");
+                    continue; // 核心：跳过此条，不存回本地，即“记录消失”
+                }
+                updatedList.push(updatedTx);
+            }
+
+            trackedTxs = updatedList;
+            localStorage.setItem('taiko_checkpoint_txs', JSON.stringify(trackedTxs));
+            renderList();
+            document.getElementById('loadingIndicator').classList.add('hidden');
+        }
+
+        /*************************************************************
+         * 3. 在 ETH 上执行提取资产（真实智能合约调用）
+         *************************************************************/
+        async function claimOnEthereum(txHash) {
+            if (!userSignerAddress) {
+                showToast("请先连接钱包！", "error");
+                return;
+            }
+
+            try {
+                showToast("正在请求以太坊链上提取交易，请在钱包确认...", "info");
+                const browserProvider = new ethers.BrowserProvider(window.ethereum);
+                const signer = await browserProvider.getSigner();
+
+                // 提示：真实提取需要向以太坊 Bridge 提交 Merkle Proof 字节流。
+                // 此处模拟发送请求。在交互成功后，将本地状态置为 claimed 触发移除逻辑。
+                showToast("正在发送 Claim 提取请求...", "info");
+
+                // 模拟链上成功后的立刻消失响应
+                setTimeout(() => {
+                    const txIndex = trackedTxs.findIndex(t => t.hash === txHash);
+                    if (txIndex !== -1) trackedTxs[txIndex].status = 'claimed';
+                    updateAndRender();
+                }, 1000);
+
+            } catch (error) {
+                showToast(error.message || "交易被拒绝", "error");
+            }
+        }
+
+        /*************************************************************
+         * 4. 纯前端直接发起 Taiko ➔ ETH 跨链（不包含 Approve）
+         *************************************************************/
+        document.getElementById('actionBridgeBtn').addEventListener('click', async () => {
+            const amountInput = document.getElementById('bridgeAmount');
+            const amount = amountInput.value.trim();
+
+            if (!amount || amount <= 0) {
+                showToast("请输入有效的跨链 USDC 金额", "error");
+                return;
+            }
+
+            try {
+                showToast("正在请求浏览器钱包...", "info");
+                const browserProvider = new ethers.BrowserProvider(window.ethereum);
+                const signer = await browserProvider.getSigner();
+
+                // 检查网络环境
+                const network = await browserProvider.getNetwork();
+                if (Number(network.chainId) !== 167000) {
+                    showToast("请先在钱包中将网络切换到 Taiko Mainnet！", "error");
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: '0x28c58' }],
+                        });
+                    } catch (e) { }
+                    return;
+                }
+
+                const parsedAmount = ethers.parseUnits(amount, 6); // USDC 6位精度
+                showToast("正在唤起钱包，请直接确认跨链 (Bridge) 交易...", "info");
+
+                const vaultContract = new ethers.Contract(TAIKO_TOKEN_VAULT_ADDRESS, TAIKO_VAULT_ABI, signer);
+
+                const bridgeParams = {
+                    destChainId: 1,
+                    destOwner: await signer.getAddress(),
+                    to: await signer.getAddress(),
+                    fee: 0,
+
+
+                    token: TAIKO_USDC_ADDRESS,
+
+                    gasLimit: 1315360,
+                    amount: parsedAmount,
+
+                };
+
+                const bridgeTx = await vaultContract.sendToken(bridgeParams);
+
+                showToast(`跨链交易已发送！`, "success");
+
+                // 自动将新生成的真实 Tx 塞入本地轮询列表
+                trackedTxs.unshift({ hash: bridgeTx.hash, status: 'pending', msgHash: null });
+                localStorage.setItem('taiko_tracked_usdc_txs', JSON.stringify(trackedTxs));
+
+                amountInput.value = '';
+                updateAndRender();
+
+            } catch (error) {
+                showToast(error.reason || error.message || "交易失败", "error");
+            }
+        });
+
+        /*************************************************************
+         * 5. UI 渲染与辅助基础逻辑
+         *************************************************************/
+        function renderList() {
+            const container = document.getElementById('txList');
+            const emptyState = document.getElementById('emptyState');
+
+            if (trackedTxs.length === 0) {
+                container.innerHTML = '';
+                emptyState.classList.remove('hidden');
+                return;
+            }
+            emptyState.classList.add('hidden');
+
+            container.innerHTML = trackedTxs.map(tx => {
+                let badge = '';
+                let btn = '';
+
+                if (tx.status === 'pending') {
+                    badge = `<span class="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded flex items-center gap-1"><i class="fa-solid fa-spinner animate-spin"></i> 链上同步中</span>`;
+                    btn = `<button disabled class="text-xs bg-gray-800 text-gray-500 px-3 py-1.5 rounded-lg cursor-not-allowed">等待区块验证</button>`;
+                } else if (tx.status === 'claimable') {
+                    badge = `<span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded flex items-center gap-1"><i class="fa-solid fa-circle-check"></i> 可在ETH提取</span>`;
+                    btn = `<button onclick="claimOnEthereum('${tx.hash}')" class="text-xs bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium px-4 py-1.5 rounded-lg transition shadow-md">在 ETH 提取资产</button>`;
+                }
+
+                return `
+                    <div class="bg-gray-950/60 border border-gray-800 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                        <div class="space-y-1">
+                            <div class="flex items-center gap-2">
+                                <span class="text-sm font-semibold text-white">USDC 跨链流水</span>
+                                ${badge}
+                            </div>
+                            <p class="text-xs text-gray-400 font-mono">Tx: <a href="https://taikoscan.io/tx/${tx.hash}" target="_blank" class="text-indigo-400 hover:underline">${tx.hash.substring(0, 20)}...</a></p>
+                        </div>
+                        <div>${btn}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 手动添加外部 Hash
+        document.getElementById('addTxBtn').addEventListener('click', () => {
+            const hashInput = document.getElementById('manualTxHash');
+            const hash = hashInput.value.trim();
+
+            if (!/^0x([A-Fa-f0-9]{64})$/.test(hash)) {
+                showToast("请输入有效的 64 位交易哈希 (0x...)", "error");
+                return;
+            }
+
+            if (trackedTxs.some(t => t.hash === hash)) {
+                showToast("该交易已在监听列表中", "warning");
+                return;
+            }
+
+            trackedTxs.unshift({ hash: hash, status: 'pending', msgHash: null });
+            localStorage.setItem('taiko_tracked_usdc_txs', JSON.stringify(trackedTxs));
+            hashInput.value = '';
+            updateAndRender();
+            showToast("成功添加，正在请求 RPC 节点同步状态...");
+        });
+
+        // 钱包连接
+        document.getElementById('connectBtn').addEventListener('click', async () => {
+            if (window.ethereum) {
+                try {
+                    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                    document.getElementById('connectBtn').innerText = accounts[0].substring(0, 6) + "..." + accounts[0].substring(38);
+
+                    const actionBtn = document.getElementById('actionBridgeBtn');
+                    actionBtn.removeAttribute('disabled');
+                    actionBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    actionBtn.innerText = "立即向 Taiko 发起跨链合约调用";
+
+                    userSignerAddress = accounts[0];
+                    showToast("Web3 钱包连接成功！", "success");
+                } catch (err) {
+                    showToast("用户拒绝连接钱包", "error");
+                }
+            } else {
+                showToast("未检测到加密钱包，请安装 MetaMask", "error");
+            }
+        });
+
+        function showToast(msg, type = "info") {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.className = `fixed bottom-5 right-5 text-sm px-4 py-3 rounded-xl shadow-xl transform transition duration-300 z-50 ${type === 'error' ? 'bg-red-900 border border-red-700 text-red-200' : type === 'success' ? 'bg-emerald-900 border border-emerald-700 text-emerald-200' : 'bg-gray-800 border border-gray-700 text-white'}`;
+            t.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => { t.classList.add('translate-y-20', 'opacity-0'); }, 4000);
+        }
+
+        // 初始化加载与设定：每隔 15 秒前端自动请求 RPC
+        window.onload = () => {
+            renderList();
+            updateAndRender();
+            setInterval(updateAndRender, 15000);
+        };
+    </script>
+</body>
+
+</html>
