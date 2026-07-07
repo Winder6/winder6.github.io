@@ -93,7 +93,9 @@
         class="fixed bottom-5 right-5 bg-gray-800 border border-gray-700 text-sm px-4 py-3 rounded-xl shadow-xl transform translate-y-20 opacity-0 transition duration-300 z-50">
     </div>
 
-    <script>
+    <script >
+        
+
         /*************************************************************
          * 1. 真实区块链配置 (以 Taiko 主网 和 Ethereum 主网为例)
          *************************************************************/
@@ -122,6 +124,12 @@
             // 注意：如果在实际事件中 blockNumber 不是 indexed，请去掉 indexed 关键字，保持与官方 abi 一致
         ];
 
+        const PROCESS_MESSAGE_ABI = [
+            "function processMessage((uint64 id, uint64 fee, uint32 gasLimit, address from, uint64 srcChainId, address srcOwner, uint64 destChainId, address destOwner, address to, uint256 value, bytes data) _message, bytes _proof) external payable"
+        ];
+
+        let latestSavedL2Block = 0
+
         // 初始化 ethers 静态只读 Provider
         const taikoProvider = new ethers.JsonRpcProvider(TAIKO_RPC);
         const ethProvider = new ethers.JsonRpcProvider(ETH_RPC);
@@ -149,37 +157,37 @@
                         localStorage.setItem('taiko_checkpoint_txs', JSON.stringify(trackedTxs));
                     }
 
-                        const iface = new ethers.Interface(BRIDGE_LOG_ABI);
+                    const iface = new ethers.Interface(BRIDGE_LOG_ABI);
 
-                // 遍历这笔交易产生的所有日志（Logs）
-                for (const log of receipt.logs) {
-                    try {
-                        // 尝试用 MessageSent 的 ABI 去解析日志
-                        const parsedLog = iface.parseLog({
-                            topics: [...log.topics],
-                            data: log.data
-                        });
+                    // 遍历这笔交易产生的所有日志（Logs）
+                    for (const log of receipt.logs) {
+                        try {
+                            // 尝试用 MessageSent 的 ABI 去解析日志
+                            const parsedLog = iface.parseLog({
+                                topics: [...log.topics],
+                                data: log.data
+                            });
 
-                        // 如果解析成功且事件名为 MessageSent
-                        if (parsedLog && parsedLog.name === "MessageSent") {
-                            tx.msgHash = parsedLog.args.msgHash; // 成功拿到真实的 msgHash !
-                            console.log(`成功解析到 msgHash: ${tx.msgHash}`);
-                            break;
+                            // 如果解析成功且事件名为 MessageSent
+                            if (parsedLog && parsedLog.name === "MessageSent") {
+                                tx.msgHash = parsedLog.args.msgHash; // 成功拿到真实的 msgHash !
+                                console.log(`成功解析到 msgHash: ${tx.msgHash}`);
+                                break;
+                            }
+                        } catch (e) {
+                            // 如果当前 log 不是 MessageSent 事件，parseLog 会报错，直接跳过继续匹配
+                            continue;
                         }
-                    } catch (e) {
-                        // 如果当前 log 不是 MessageSent 事件，parseLog 会报错，直接跳过继续匹配
-                        continue;
+                    }
+
+                    // 如果遍历完还没有找到，说明这笔 Tx 可能不是一笔合规的 Taiko 跨链交易
+                    if (!tx.msgHash) {
+                        tx.amount = "非跨链交易或正在解析";
+                        return tx;
+
                     }
                 }
 
-                // 如果遍历完还没有找到，说明这笔 Tx 可能不是一笔合规的 Taiko 跨链交易
-                if (!tx.msgHash) {
-                    tx.amount = "非跨链交易或正在解析";
-                    return tx;
-
-                }
-                }
-            
 
                 const ethBridge = new ethers.Contract(ETH_BRIDGE_ADDRESS, BRIDGE_ABI, ethProvider);
 
@@ -222,7 +230,7 @@
                 const latestLog = logs[logs.length - 1];
 
                 // 对应 logs[logs.length - 1].args.blockNumber!
-                const latestSavedL2Block = BigInt(latestLog.args.blockNumber);
+                latestSavedL2Block = BigInt(latestLog.args.blockNumber);
 
                 // D. 进行高度对比判定
                 if (BigInt(tx.blockNumber) <= latestSavedL2Block) {
@@ -261,6 +269,94 @@
         /*************************************************************
          * 3. 在 ETH 上执行提取资产（真实智能合约调用）
          *************************************************************/
+        function getSignalSlot(chainId, contractAddress, msgHash) {
+            // 还原 viem 的 encodePacked 写法
+            return ethers.solidityPackedKeccak256(
+                ['string', 'uint64', 'address', 'bytes32'],
+                ['SIGNAL', BigInt(chainId), contractAddress, msgHash]
+            );
+        }
+
+
+        async function getProof(args) {
+                const { chainId, blockNumber, key, signalServiceAddress } = args;
+
+             
+
+                // 1. 将区块高度转换为符合 RPC 规范的十六进制字符串 (例如: 1000 -> "0x3e8")
+                const hexBlockNumber = ethers.toBeHex(BigInt(blockNumber));
+
+                // 2. 替代 client.request，直接通过 provider.send 调用底层原生 RPC 方法
+                const ethProof = await taikoProvider.send("eth_getProof", [
+                    signalServiceAddress,
+                    [key],
+                    hexBlockNumber
+                ]);
+
+                // 3. 100% 还原官方源码校验逻辑：
+                // 检测 storageProof[0].value。如果信号还没有写入或者还未在指定的区块高度生效，RPC 会返回 0x0 或 0n。
+                const proofValue = ethProof.storageProof[0].value;
+                
+                if (!proofValue || ethers.toBeHex(proofValue) === "0x0" || BigInt(proofValue) === 0n) {
+                    throw new Error('Proof will not be valid, expected storageProof to not be 0 (ProofGenerationError)');
+                }
+
+                return ethProof;
+            }
+
+        
+                    /**
+             * 自己实现的 encodeAbiParameters（基于 ethers.js v6 转换）
+             * @param {Array} params - 兼容 viem 格式的参数定义
+             * @param {Array} values - 对应需要编码的真实数值
+             * @returns {string} 16 进制 ABI 编码字节流 (0x...)
+             */
+            function myEncodeAbiParameters(params, values) {
+                // 1. 将 viem 的复杂对象 ABI 定义，翻译成 ethers.js 识别的 Human-Readable 文本 ABI
+                const translateComponent = (comp) => {
+                    if (comp.type === 'tuple' && comp.components) {
+                        return `(${comp.components.map(translateComponent).join(',')})`;
+                    }
+                    if (comp.type === 'tuple[]' && comp.components) {
+                        return `(${comp.components.map(translateComponent).join(',')})[]`;
+                    }
+                    return comp.type; // uint64, bytes32, bytes[] 等基础或原生动态类型
+                };
+
+                const ethersTypes = params.map(translateComponent);
+
+                // 2. 调用 ethers.js 的 AbiCoder 核心进行底层高精度编码
+                // 它会自动帮你计算所有 tuple 数组、bytes 数组的 Head/Tail 偏移量（Offsets）
+                return ethers.AbiCoder.defaultAbiCoder().encode(ethersTypes, values);
+            }
+        function encodeHopProofs (hopProofs) {
+            const params = [
+            {
+                type: 'tuple[]',
+                name: 'hops',
+                components: [
+                { name: 'chainId', type: 'uint64' },
+                { name: 'blockId', type: 'uint64' },
+                { name: 'rootHash', type: 'bytes32' },
+                { name: 'cacheOption', type: 'uint8' },
+                { name: 'accountProof', type: 'bytes[]' },
+                { name: 'storageProof', type: 'bytes[]' },
+                ],
+            },
+            ];
+
+            const values = hopProofs.map((hp) => [
+            hp.chainId,
+            hp.blockId,
+            hp.rootHash,
+            hp.cacheOption,
+            hp.accountProof,
+            hp.storageProof,
+            ]);
+
+            return myEncodeAbiParameters(params, [values]);
+        };
+
         async function claimOnEthereum(txHash) {
             if (!userSignerAddress) {
                 showToast("请先连接钱包！", "error");
@@ -269,11 +365,123 @@
 
             try {
                 showToast("正在请求以太坊链上提取交易，请在钱包确认...", "info");
-                const browserProvider = new ethers.BrowserProvider(window.ethereum);
-                const signer = await browserProvider.getSigner();
+                // 1. 实时去 L2 节点拉取这笔交易的最新收据
+                const receipt = await taikoProvider.getTransactionReceipt(txHash);
+                if (!receipt) return showToast("在 Taiko 链上未找到该交易，请确认是否已成功出块", "error");
 
-                // 提示：真实提取需要向以太坊 Bridge 提交 Merkle Proof 字节流。
-                // 此处模拟发送请求。在交互成功后，将本地状态置为 claimed 触发移除逻辑。
+                const blockNumber = receipt.blockNumber; // 实时获取出块高度
+                let msgHash = null;
+                let rawMessageData = null;
+
+                // 2. 实时通过 ABI 解析日志提取完整的 message 结构体
+                const iface = new ethers.Interface(BRIDGE_LOG_ABI);
+                for (const log of receipt.logs) {
+                    try {
+                        const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+                        if (parsed?.name === "MessageSent") {
+                            msgHash = parsed.args.msgHash;
+                            const m = parsed.args.message;
+                            // 实时构造标准 Message 数据对象
+                            rawMessageData = {
+                                id: m.id.toString(), fee: m.fee.toString(), gasLimit: m.gasLimit.toString(),
+                                from: m.from, srcChainId: m.srcChainId.toString(), srcOwner: m.srcOwner,
+                                destChainId: m.destChainId.toString(), destOwner: m.destOwner, to: m.to,
+                                value: m.value.toString(), data: m.data
+                            };
+                            break;
+                        }
+                    } catch (e) { /* 忽略非目标日志 */ }
+                }
+
+                if (!msgHash || !rawMessageData) {
+                    return showToast("解析失败：该交易未包含有效的 Taiko 跨链消息日志", "error");
+                }
+
+                showToast("正在计算底层存储插槽并向 L2 请求 eth_getProof...", "info");
+
+                const l_s_block = await taikoProvider.send("eth_getBlockByNumber", [
+                    ethers.toBeHex(latestSavedL2Block),
+                    false 
+                ]);;
+
+                // 3. 实时计算 getSignalSlot 存储 Key
+                const key = getSignalSlot(rawMessageData.srcChainId, '0x1670000000000000000000000000000000000001', msgHash);
+                const ethProof = await getProof({
+                    chainId: BigInt(167000),
+                    blockNumber: latestSavedL2Block,
+                    key,
+                    signalServiceAddress:'0x1670000000000000000000000000000000000005'
+                });
+
+                const hopProof = {
+                    chainId: BigInt(1),
+                    blockId: latestSavedL2Block,
+                    rootHash: l_s_block.stateRoot,
+                    cacheOption: 0,
+                    accountProof: ethProof.accountProof,
+                    storageProof: ethProof.storageProof[0].proof,
+                };
+                const encodedProof = encodeHopProofs([hopProof]);
+                
+
+                    const browserProvider = new ethers.BrowserProvider(window.ethereum);
+        
+        // =================【核心修复：自动检测并切换网络】=================
+        const network = await browserProvider.getNetwork();
+        const ETH_L1_CHAIN_ID = 1; // 以太坊主网 ChainId
+
+        if (Number(network.chainId) !== ETH_L1_CHAIN_ID) {
+            showToast("正在请求钱包自动切换至 Ethereum 主网...", "info");
+            try {
+                // 唤起 MetaMask 切换网络弹窗
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0x1' }], // 1 的十六进制是 '0x1'
+                });
+                
+                // 切换网络后，底层 Provider 的状态会刷新，需要重新获取一次 Signer
+                // 给钱包一点点微小的响应时间
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (switchError) {
+                console.error("切换至以太坊网络失败:", switchError);
+                // 4902 错误码表示钱包里没有配置这条链（主网通常不会触发，自定义链会触发）
+                if (switchError.code === 4902) {
+                    return showToast("请在钱包中手动添加并切换至 Ethereum 主网", "error");
+                }
+                return showToast("拒绝切换网络，无法在以太坊提取资产！", "error");
+            }
+        }
+
+        const currentBrowserProvider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await currentBrowserProvider.getSigner();
+
+
+                
+                const ethBridgeContract = new ethers.Contract('0xd60247c6848B7Ca29eDdF63AA924E53dB6Ddd8EC', PROCESS_MESSAGE_ABI, signer);
+
+                const formattedMessage = {
+                    id: BigInt(rawMessageData.id),
+                    fee: BigInt(rawMessageData.fee),
+                    gasLimit: Number(rawMessageData.gasLimit),
+                    from: rawMessageData.from,
+                    srcChainId: BigInt(rawMessageData.srcChainId),
+                    srcOwner: rawMessageData.srcOwner,
+                    destChainId: BigInt(rawMessageData.destChainId),
+                    destOwner: rawMessageData.destOwner,
+                    to: rawMessageData.to,
+                    value: BigInt(rawMessageData.value),
+                    data: rawMessageData.data
+                };
+
+                const claimTx = await ethBridgeContract.processMessage(formattedMessage, encodedProof, {
+            gasLimit: 1300000n
+        });
+        
+        showToast("提取资产交易已发送，等待以太坊网络打包...", "info");
+        await claimTx.wait(); // 挂起等待以太坊上真正打包成功
+
+        showToast("资产提取成功！", "success");
+
                 showToast("正在发送 Claim 提取请求...", "info");
 
                 // 模拟链上成功后的立刻消失响应
