@@ -154,7 +154,7 @@
                     if (globalIdx !== -1) {
                         trackedTxs[globalIdx].blockNumber = tx.blockNumber;
                         trackedTxs[globalIdx].msgHash = tx.msgHash;
-                        localStorage.setItem('taiko_checkpoint_txs', JSON.stringify(trackedTxs));
+                        localStorage.setItem('taiko_tracked_usdc_txs', JSON.stringify(trackedTxs));
                     }
 
                     const iface = new ethers.Interface(BRIDGE_LOG_ABI);
@@ -261,7 +261,7 @@
             }
 
             trackedTxs = updatedList;
-            localStorage.setItem('taiko_checkpoint_txs', JSON.stringify(trackedTxs));
+            localStorage.setItem('taiko_tracked_usdc_txs', JSON.stringify(trackedTxs));
             renderList();
             document.getElementById('loadingIndicator').classList.add('hidden');
         }
