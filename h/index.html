@@ -1,0 +1,1906 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+    <meta name="robots" content="noindex, nofollow">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>H</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #111;
+      color: #eee;
+      font-family:
+        Arial,
+        "Microsoft YaHei",
+        sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 40px 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 560px;
+      background: #1b1b1b;
+      border: 1px solid #333;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    h1 {
+      margin: 0 0 24px;
+      font-size: 24px;
+    }
+
+    .wallet-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 11px 16px;
+      cursor: pointer;
+      background: #fff;
+      color: #111;
+      font-weight: 600;
+    }
+
+    button:hover {
+      opacity: 0.9;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .address {
+      flex: 1;
+      min-width: 0;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .balance-box {
+      background: #101010;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    .balance-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+    }
+
+    .balance-label {
+      color: #999;
+    }
+
+    .balance-value {
+      font-weight: 600;
+    }
+
+    .section {
+      margin-top: 18px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: #aaa;
+      font-size: 13px;
+    }
+
+    input {
+      width: 100%;
+      background: #111;
+      color: #fff;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 16px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: #777;
+    }
+
+    .full {
+      width: 100%;
+      margin-top: 12px;
+    }
+
+    .status {
+      margin-top: 20px;
+      padding: 14px;
+      background: #101010;
+      border: 1px solid #333;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .success {
+      border-color: #315d3a;
+    }
+
+    .error {
+      border-color: #6d3030;
+    }
+
+    .vaa {
+      margin-top: 12px;
+      font-size: 11px;
+      color: #777;
+      word-break: break-all;
+      max-height: 120px;
+      overflow: auto;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .small {
+      color: #777;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .network {
+      color: #aaa;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>H → U</h1>
+
+  <div class="wallet-row">
+    <button id="connectBtn">连接钱包</button>
+    <div id="walletAddress" class="address">未连接</div>
+  </div>
+
+  <div id="network" class="network">
+    网络：未连接
+  </div>
+
+  <!-- 实时余额 -->
+  <div class="balance-box">
+
+    <div class="balance-item">
+      <span class="balance-label">H</span>
+      <span id="hypeBalance" class="balance-value">-</span>
+    </div>
+
+    <div class="balance-item">
+      <span class="balance-label">WH</span>
+      <span id="whypeBalance" class="balance-value">-</span>
+    </div>
+
+  </div>
+
+  <div class="section">
+
+    <label for="amount">
+      转账数量 H
+    </label>
+
+    <input
+      id="amount"
+      type="text"
+      inputmode="decimal"
+      placeholder="例如 300"
+      value="1"
+    />
+
+    <button
+      id="transferBtn"
+      class="full"
+      disabled
+    >
+      转账到 Unichain
+    </button>
+
+  </div>
+
+  <div id="redeemSection" class="section hidden">
+
+    <button
+      id="redeemBtn"
+      class="full"
+    >
+      Redeem 到 Unichain
+    </button>
+
+  </div>
+
+  <div id="status" class="status">
+    请先连接 MetaMask
+  </div>
+
+  <div id="vaaBox" class="vaa hidden"></div>
+
+</div>
+
+
+<script>
+"use strict";
+
+const {
+  ethers
+} = window;
+
+
+/* =========================================================
+   网络
+========================================================= */
+
+const HYPEREVM_CHAIN_ID = 999;
+const UNICHAIN_CHAIN_ID = 130;
+
+const WORMHOLE_HYPEREVM_CHAIN = 47;
+const WORMHOLE_UNICHAIN_CHAIN = 44;
+
+
+/* =========================================================
+   RPC
+========================================================= */
+
+const HYPEREVM_RPC =
+  "https://rpc.hyperliquid.xyz/evm";
+
+const UNICHAIN_RPC =
+  "https://mainnet.unichain.org";
+
+
+/* =========================================================
+   Explorer
+========================================================= */
+
+const HYPEREVM_EXPLORER =
+  "https://hyperevmscan.io";
+
+const UNICHAIN_EXPLORER =
+  "https://uniscan.xyz";
+
+
+/* =========================================================
+   合约地址
+========================================================= */
+
+/*
+ * HyperEVM canonical WHYPE
+ */
+const WHYPE_ADDRESS =
+  "0x5555555555555555555555555555555555555555";
+
+
+/*
+ * HyperEVM NTT Manager
+ */
+const SOURCE_NTT_MANAGER =
+  "0x452A2613f9200dB250Ec30d15643f4535934Ea77";
+
+
+/*
+ * HyperEVM Wormhole Transceiver
+ */
+const SOURCE_TRANSCEIVER =
+  "0x187558a6Cc56e1a0f0DF7a2760aB765297E6cef2";
+
+
+/*
+ * Unichain NTT Manager
+ */
+const DEST_NTT_MANAGER =
+  "0x9edb50805a555e67f5c76ada6c34b0e17e28c045";
+
+
+/*
+ * Unichain Wormhole Transceiver
+ */
+const DEST_TRANSCEIVER =
+  "0x29cded8168661639590045eb76175800a49feadf";
+
+
+/* =========================================================
+   ABI
+========================================================= */
+
+const WHYPE_ABI = [
+
+  "function deposit() payable",
+
+  "function withdraw(uint256 amount)",
+
+  "function balanceOf(address owner) view returns (uint256)",
+
+  "function allowance(address owner,address spender) view returns (uint256)",
+
+  "function approve(address spender,uint256 amount) returns (bool)"
+
+];
+
+
+const NTT_MANAGER_ABI = [
+
+  /*
+   * 新版 NTT transfer
+   */
+  "function transfer(uint256 amount,uint16 recipientChain,bytes32 recipient,bytes32 refundAddress,bool shouldQueue,bytes transceiverInstructions) payable returns (uint64)",
+
+  /*
+   * 源链需要 Wormhole message fee
+   */
+  "function quoteDeliveryPrice(uint16 recipientChain,bytes transceiverInstructions) view returns (uint256)"
+
+];
+
+
+const TRANSCEIVER_ABI = [
+
+  "function receiveMessage(bytes encodedMessage)"
+
+];
+
+
+/* =========================================================
+   Wormholescan
+========================================================= */
+
+const WORMHOLESCAN_API =
+  "https://api.wormholescan.io/api/v1/operations?txHash=";
+
+
+/* =========================================================
+   官方 HYPE NTT transceiverInstructions
+========================================================= */
+
+const TRANSCEIVER_INSTRUCTIONS =
+  "0x01000101";
+
+
+/* =========================================================
+   全局变量
+========================================================= */
+
+let provider = null;
+let signer = null;
+let walletAddress = null;
+
+let currentSourceTx = null;
+let vaaHex = null;
+
+let balanceTimer = null;
+let vaaTimer = null;
+
+
+/* =========================================================
+   DOM
+========================================================= */
+
+const connectBtn =
+  document.getElementById("connectBtn");
+
+const transferBtn =
+  document.getElementById("transferBtn");
+
+const redeemBtn =
+  document.getElementById("redeemBtn");
+
+const walletAddressEl =
+  document.getElementById("walletAddress");
+
+const networkEl =
+  document.getElementById("network");
+
+const hypeBalanceEl =
+  document.getElementById("hypeBalance");
+
+const whypeBalanceEl =
+  document.getElementById("whypeBalance");
+
+const amountEl =
+  document.getElementById("amount");
+
+const statusEl =
+  document.getElementById("status");
+
+const redeemSection =
+  document.getElementById("redeemSection");
+
+const vaaBox =
+  document.getElementById("vaaBox");
+
+
+/* =========================================================
+   状态
+========================================================= */
+
+function setStatus(message, type = "") {
+
+  statusEl.textContent = message;
+
+  statusEl.className =
+    "status " + type;
+}
+
+
+/* =========================================================
+   格式化余额
+========================================================= */
+
+function formatBalance(value) {
+
+  const number =
+    Number(ethers.formatEther(value));
+
+  if (!Number.isFinite(number)) {
+    return "0";
+  }
+
+  return number.toLocaleString(
+    "en-US",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 6
+    }
+  );
+}
+
+
+/* =========================================================
+   检查 HyperEVM
+========================================================= */
+
+async function ensureHyperEVM() {
+
+  if (!window.ethereum) {
+    throw new Error("未检测到 MetaMask");
+  }
+
+  const network =
+    await provider.getNetwork();
+
+  if (Number(network.chainId) === HYPEREVM_CHAIN_ID) {
+    return;
+  }
+
+  try {
+
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [
+        {
+          chainId: "0x3e7"
+        }
+      ]
+    });
+
+  } catch (error) {
+
+    if (error.code === 4902) {
+
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: "0x3e7",
+            chainName: "HyperEVM",
+            nativeCurrency: {
+              name: "HYPE",
+              symbol: "HYPE",
+              decimals: 18
+            },
+            rpcUrls: [
+              HYPEREVM_RPC
+            ],
+            blockExplorerUrls: [
+              HYPEREVM_EXPLORER
+            ]
+          }
+        ]
+      });
+
+    } else {
+      throw error;
+    }
+  }
+
+  provider =
+    new ethers.BrowserProvider(
+      window.ethereum
+    );
+
+  signer =
+    await provider.getSigner();
+
+  walletAddress =
+    await signer.getAddress();
+
+  updateUI();
+
+}
+
+
+/* =========================================================
+   检查 Unichain
+========================================================= */
+
+async function ensureUnichain() {
+
+  const current =
+    await provider.getNetwork();
+
+  if (Number(current.chainId) === UNICHAIN_CHAIN_ID) {
+    return;
+  }
+
+  try {
+
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [
+        {
+          chainId: "0x82"
+        }
+      ]
+    });
+
+  } catch (error) {
+
+    if (error.code === 4902) {
+
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: "0x82",
+            chainName: "Unichain",
+            nativeCurrency: {
+              name: "Ether",
+              symbol: "ETH",
+              decimals: 18
+            },
+            rpcUrls: [
+              UNICHAIN_RPC
+            ],
+            blockExplorerUrls: [
+              UNICHAIN_EXPLORER
+            ]
+          }
+        ]
+      });
+
+    } else {
+      throw error;
+    }
+  }
+
+  provider =
+    new ethers.BrowserProvider(
+      window.ethereum
+    );
+
+  signer =
+    await provider.getSigner();
+
+}
+
+
+/* =========================================================
+   UI
+========================================================= */
+
+async function updateUI() {
+
+  if (!walletAddress) {
+
+    walletAddressEl.textContent =
+      "未连接";
+
+    transferBtn.disabled =
+      true;
+
+    return;
+  }
+
+  walletAddressEl.textContent =
+    walletAddress;
+
+  transferBtn.disabled =
+    false;
+
+  try {
+
+    const network =
+      await provider.getNetwork();
+
+    const chainId =
+      Number(network.chainId);
+
+    if (chainId === HYPEREVM_CHAIN_ID) {
+
+      networkEl.textContent =
+        "网络：HyperEVM";
+
+    } else if (chainId === UNICHAIN_CHAIN_ID) {
+
+      networkEl.textContent =
+        "网络：Unichain";
+
+    } else {
+
+      networkEl.textContent =
+        "网络：Chain ID " + chainId;
+
+    }
+
+  } catch (error) {
+
+    console.error(error);
+
+  }
+
+}
+
+
+/* =========================================================
+   实时余额
+========================================================= */
+
+async function updateBalances() {
+
+  if (!walletAddress || !provider) {
+
+    hypeBalanceEl.textContent =
+      "-";
+
+    whypeBalanceEl.textContent =
+      "-";
+
+    return;
+  }
+
+  try {
+
+    const whype =
+      new ethers.Contract(
+        WHYPE_ADDRESS,
+        WHYPE_ABI,
+        provider
+      );
+
+    const [
+      nativeBalance,
+      whypeBalance
+    ] = await Promise.all([
+
+      provider.getBalance(
+        walletAddress
+      ),
+
+      whype.balanceOf(
+        walletAddress
+      )
+
+    ]);
+
+    hypeBalanceEl.textContent =
+      formatBalance(nativeBalance) +
+      " HYPE";
+
+    whypeBalanceEl.textContent =
+      formatBalance(whypeBalance) +
+      " WHYPE";
+
+  } catch (error) {
+
+    console.error(
+      "余额刷新失败:",
+      error
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   启动余额实时刷新
+========================================================= */
+
+function startBalancePolling() {
+
+  if (balanceTimer) {
+    clearInterval(balanceTimer);
+  }
+
+  updateBalances();
+
+  balanceTimer =
+    setInterval(
+      updateBalances,
+      2000
+    );
+}
+
+
+/* =========================================================
+   连接钱包
+========================================================= */
+
+async function connectWallet() {
+
+  if (!window.ethereum) {
+
+    alert(
+      "请先安装 MetaMask"
+    );
+
+    return;
+  }
+
+  try {
+
+    await window.ethereum.request({
+      method: "eth_requestAccounts"
+    });
+
+    provider =
+      new ethers.BrowserProvider(
+        window.ethereum
+      );
+
+    signer =
+      await provider.getSigner();
+
+    walletAddress =
+      await signer.getAddress();
+
+    await updateUI();
+
+    await updateBalances();
+
+    startBalancePolling();
+
+    setStatus(
+      "钱包已连接\n" +
+      walletAddress
+    );
+
+  } catch (error) {
+
+    console.error(error);
+
+    setStatus(
+      "连接钱包失败\n" +
+      getErrorMessage(error),
+      "error"
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   错误信息
+========================================================= */
+
+function getErrorMessage(error) {
+
+  if (!error) {
+    return "未知错误";
+  }
+
+  if (error.shortMessage) {
+    return error.shortMessage;
+  }
+
+  if (error.reason) {
+    return error.reason;
+  }
+
+  if (error.message) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+
+/* =========================================================
+   确保 WHYPE 足够
+========================================================= */
+
+async function ensureWHYPE(amount) {
+
+  const whype =
+    new ethers.Contract(
+      WHYPE_ADDRESS,
+      WHYPE_ABI,
+      signer
+    );
+
+  const whypeBalance =
+    await whype.balanceOf(
+      walletAddress
+    );
+
+  /*
+   * 已经足够，不 Wrap
+   */
+  if (whypeBalance >= amount) {
+
+    setStatus(
+      "WHYPE 余额足够\n" +
+      "无需 Wrap HYPE"
+    );
+
+    return;
+  }
+
+
+  /*
+   * 只 Wrap 缺少的部分
+   */
+  const need =
+    amount - whypeBalance;
+
+
+  const nativeBalance =
+    await provider.getBalance(
+      walletAddress
+    );
+
+
+  /*
+   * 给 gas 留一点 HYPE
+   */
+  const gasReserve =
+    ethers.parseEther("0.01");
+
+
+  if (
+    nativeBalance <
+    need + gasReserve
+  ) {
+
+    throw new Error(
+      "HYPE 余额不足\n" +
+      "需要 Wrap：" +
+      ethers.formatEther(need) +
+      " HYPE\n" +
+      "当前 HYPE：" +
+      ethers.formatEther(nativeBalance)
+    );
+
+  }
+
+
+  setStatus(
+    "WHYPE 不足\n" +
+    "正在 Wrap " +
+    ethers.formatEther(need) +
+    " HYPE..."
+  );
+
+
+  const tx =
+    await whype.deposit({
+      value: need
+    });
+
+
+  setStatus(
+    "Wrap 交易已提交\n" +
+    tx.hash
+  );
+
+
+  await tx.wait();
+
+
+  await updateBalances();
+
+
+  setStatus(
+    "Wrap 完成\n" +
+    "增加 WHYPE：" +
+    ethers.formatEther(need)
+  );
+
+}
+
+
+/* =========================================================
+   确保 Approve
+========================================================= */
+
+async function ensureApproval(amount) {
+
+  const whype =
+    new ethers.Contract(
+      WHYPE_ADDRESS,
+      WHYPE_ABI,
+      signer
+    );
+
+
+  const allowance =
+    await whype.allowance(
+      walletAddress,
+      SOURCE_NTT_MANAGER
+    );
+
+
+  if (allowance >= amount) {
+
+    return;
+  }
+
+
+  setStatus(
+    "WHYPE allowance 不足\n" +
+    "正在 Approve..."
+  );
+
+
+  const tx =
+    await whype.approve(
+      SOURCE_NTT_MANAGER,
+      ethers.MaxUint256
+    );
+
+
+  setStatus(
+    "Approve 交易已提交\n" +
+    tx.hash
+  );
+
+
+  await tx.wait();
+
+
+  setStatus(
+    "Approve 完成"
+  );
+
+}
+
+
+/* =========================================================
+   获取 Wormhole Delivery Fee
+========================================================= */
+
+async function getDeliveryFee() {
+
+  const manager =
+    new ethers.Contract(
+      SOURCE_NTT_MANAGER,
+      NTT_MANAGER_ABI,
+      provider
+    );
+
+
+  const fee =
+    await manager.quoteDeliveryPrice(
+      WORMHOLE_UNICHAIN_CHAIN,
+      TRANSCEIVER_INSTRUCTIONS
+    );
+
+
+  return fee;
+
+}
+
+
+/* =========================================================
+   HYPE → Unichain
+========================================================= */
+
+async function transferHype() {
+
+  if (!walletAddress) {
+
+    await connectWallet();
+
+    if (!walletAddress) {
+      return;
+    }
+
+  }
+
+
+  try {
+
+    transferBtn.disabled =
+      true;
+
+
+    /*
+     * 确保 HyperEVM
+     */
+    await ensureHyperEVM();
+
+
+    /*
+     * 读取数量
+     */
+    const amountText =
+      amountEl.value.trim();
+
+
+    if (!amountText) {
+      throw new Error(
+        "请输入转账数量"
+      );
+    }
+
+
+    const amount =
+      ethers.parseEther(
+        amountText
+      );
+
+
+    if (amount <= 0n) {
+
+      throw new Error(
+        "转账数量必须大于 0"
+      );
+
+    }
+
+
+    /*
+     * 检查 HYPE / WHYPE
+     */
+    await updateBalances();
+
+
+    /*
+     * Wrap 不足的 WHYPE
+     */
+    await ensureWHYPE(
+      amount
+    );
+
+
+    /*
+     * Approve
+     */
+    await ensureApproval(
+      amount
+    );
+
+
+    /*
+     * 获取 source manager
+     */
+    const manager =
+      new ethers.Contract(
+        SOURCE_NTT_MANAGER,
+        NTT_MANAGER_ABI,
+        signer
+      );
+
+
+    /*
+     * recipient
+     *
+     * bytes32:
+     * 0x000000000000000000000000 + EVM address
+     */
+    const recipient =
+      ethers.zeroPadValue(
+        walletAddress,
+        32
+      );
+
+
+    /*
+     * refundAddress
+     */
+    const refundAddress =
+      ethers.zeroPadValue(
+        walletAddress,
+        32
+      );
+
+
+    /*
+     * 不排队
+     */
+    const shouldQueue =
+      false;
+
+
+    /*
+     * 官方 HYPE deployment 使用
+     */
+    const transceiverInstructions =
+      TRANSCEIVER_INSTRUCTIONS;
+
+
+    /*
+     * 获取 Wormhole message fee
+     *
+     * 这个 fee 是 SOURCE transfer
+     * 发布 Wormhole message 所需要的。
+     *
+     * 不是 destination redeem 的 gas。
+     */
+    setStatus(
+      "正在获取 Wormhole message fee..."
+    );
+
+
+    // const deliveryFee =
+    //   await getDeliveryFee();
+
+
+    // console.log(
+    //   "Wormhole delivery fee:",
+    //   ethers.formatEther(
+    //     deliveryFee
+    //   )
+    // );
+
+
+    /*
+     * 发起 NTT transfer
+     */
+    setStatus(
+      "正在发起 HYPE → Unichain\n" +
+      "Amount: " +
+      amountText +
+      " HYPE\n" 
+    );
+
+
+    const tx =
+      await manager.transfer(
+
+        amount,
+
+        WORMHOLE_UNICHAIN_CHAIN,
+
+        recipient,
+
+        refundAddress,
+
+        shouldQueue,
+
+        transceiverInstructions,
+        {
+            gasLimit:279750,
+              maxFeePerGas: ethers.parseUnits("2", "gwei"),
+             maxPriorityFeePerGas: ethers.parseUnits("0", "gwei"),
+
+        }
+      );
+
+
+    currentSourceTx =
+      tx.hash;
+
+
+    setStatus(
+      "Source transfer 已提交\n\n" +
+      tx.hash +
+      "\n\n等待交易确认..."
+    );
+
+
+    await tx.wait();
+
+
+    /*
+     * 刷新余额
+     */
+    await updateBalances();
+
+
+    setStatus(
+      "Source transfer 已确认\n\n" +
+      tx.hash +
+      "\n\n正在等待 Wormhole VAA..."
+    );
+
+
+    /*
+     * 开始轮询 Wormholescan
+     */
+    await pollVAA(
+      tx.hash
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      error
+    );
+
+
+    setStatus(
+      "Transfer 失败\n\n" +
+      getErrorMessage(error),
+      "error"
+    );
+
+
+  } finally {
+
+    transferBtn.disabled =
+      false;
+
+  }
+
+}
+
+
+/* =========================================================
+   Base64 → Hex
+========================================================= */
+
+function base64ToHex(base64) {
+
+  const binary =
+    atob(base64);
+
+  const bytes =
+    new Uint8Array(
+      binary.length
+    );
+
+
+  for (
+    let i = 0;
+    i < binary.length;
+    i++
+  ) {
+
+    bytes[i] =
+      binary.charCodeAt(i);
+
+  }
+
+
+  return (
+    "0x" +
+    Array.from(bytes)
+      .map(
+        b =>
+          b.toString(16)
+            .padStart(2, "0")
+      )
+      .join("")
+  );
+
+}
+
+
+/* =========================================================
+   Wormholescan 获取 VAA
+========================================================= */
+
+async function pollVAA(
+  txHash
+) {
+
+  if (vaaTimer) {
+
+    clearInterval(
+      vaaTimer
+    );
+
+  }
+
+
+  vaaHex =
+    null;
+
+
+  redeemSection
+    .classList
+    .add("hidden");
+
+
+  vaaBox
+    .classList
+    .add("hidden");
+
+
+  let stopped =
+    false;
+
+
+  async function check() {
+
+    if (stopped) {
+      return;
+    }
+
+
+    try {
+
+      const response =
+        await fetch(
+          WORMHOLESCAN_API +
+          encodeURIComponent(
+            txHash
+          )
+        );
+
+
+      if (!response.ok) {
+
+        throw new Error(
+          "Wormholescan HTTP " +
+          response.status
+        );
+
+      }
+
+
+      const data =
+        await response.json();
+
+
+      console.log(
+        "Wormholescan:",
+        data
+      );
+
+
+      /*
+       * Wormholescan operations
+       */
+      const operations =
+        Array.isArray(
+          data.operations
+        )
+          ? data.operations
+          : [];
+
+
+      for (
+        const operation
+        of operations
+      ) {
+
+        /*
+         * VAA 已生成
+         */
+        if (
+          operation.vaa &&
+          operation.vaa.raw
+        ) {
+
+          vaaHex =
+            base64ToHex(
+              operation.vaa.raw
+            );
+
+
+          stopped =
+            true;
+
+
+          clearInterval(
+            vaaTimer
+          );
+
+
+          vaaTimer =
+            null;
+
+
+          redeemSection
+            .classList
+            .remove("hidden");
+
+
+          vaaBox
+            .classList
+            .remove("hidden");
+
+
+          vaaBox.textContent =
+            "VAA:\n" +
+            vaaHex;
+
+
+          setStatus(
+            "VAA 已生成\n\n" +
+            "Source Tx:\n" +
+            txHash +
+            "\n\n" +
+            "现在可以手动 Redeem 到 Unichain。",
+            "success"
+          );
+
+
+          return;
+
+        }
+
+      }
+
+
+      setStatus(
+        "Source transfer 已确认\n\n" +
+        txHash +
+        "\n\n" +
+        "VAA 尚未生成，5 秒后继续检查..."
+      );
+
+
+    } catch (error) {
+
+      console.error(
+        "VAA 查询失败:",
+        error
+      );
+
+
+      setStatus(
+        "正在等待 Wormhole VAA...\n\n" +
+        txHash +
+        "\n\n" +
+        "查询失败，5 秒后重试"
+      );
+
+    }
+
+  }
+
+
+  /*
+   * 立即检查一次
+   */
+  await check();
+
+
+  /*
+   * 之后每 5 秒检查
+   */
+  if (!stopped) {
+
+    vaaTimer =
+      setInterval(
+        check,
+        5000
+      );
+
+  }
+
+}
+
+
+/* =========================================================
+   Redeem
+========================================================= */
+
+async function redeem() {
+
+  if (!vaaHex) {
+
+    alert(
+      "VAA 尚未准备好"
+    );
+
+    return;
+  }
+
+
+  try {
+
+    redeemBtn.disabled =
+      true;
+
+
+    setStatus(
+      "正在切换到 Unichain..."
+    );
+
+
+    /*
+     * 切换 Unichain
+     */
+    await ensureUnichain();
+
+
+    /*
+     * 重新获取 provider / signer
+     */
+    provider =
+      new ethers.BrowserProvider(
+        window.ethereum
+      );
+
+
+    signer =
+      await provider.getSigner();
+
+
+    walletAddress =
+      await signer.getAddress();
+
+
+    await updateUI();
+
+
+    /*
+     * Destination transceiver
+     */
+    const transceiver =
+      new ethers.Contract(
+        DEST_TRANSCEIVER,
+        TRANSCEIVER_ABI,
+        signer
+      );
+
+
+    setStatus(
+      "正在估算 Redeem Gas..."
+    );
+
+
+    /*
+     * 估算 gas
+     */
+    const gas =
+      await transceiver.receiveMessage.estimateGas(
+        vaaHex
+      );
+
+
+    /*
+     * 留 20% buffer
+     */
+    const gasLimit =
+      gas * 120n / 100n;
+
+
+    console.log(
+      "Estimated gas:",
+      gas.toString()
+    );
+
+    console.log(
+      "Gas limit:",
+      gasLimit.toString()
+    );
+
+
+    setStatus(
+      "正在 Redeem 到 Unichain..."
+    );
+
+
+    /*
+     * 注意：
+     *
+     * 这里不支付 Wormhole delivery fee。
+     *
+     * VAA 已经生成。
+     *
+     * 这里只是手动执行 destination
+     * receiveMessage。
+     */
+    const tx =
+      await transceiver.receiveMessage(
+        vaaHex,
+        {
+          gasLimit
+        }
+      );
+
+
+    setStatus(
+      "Redeem 交易已提交\n\n" +
+      tx.hash +
+      "\n\n等待确认..."
+    );
+
+
+    const receipt =
+      await tx.wait();
+
+
+    if (
+      receipt &&
+      receipt.status === 1
+    ) {
+
+      setStatus(
+        "Redeem 成功！\n\n" +
+        tx.hash +
+        "\n\n" +
+        "HYPE 已发送到 Unichain。",
+        "success"
+      );
+
+    } else {
+
+      throw new Error(
+        "Redeem 交易失败"
+      );
+
+    }
+
+
+  } catch (error) {
+
+    console.error(
+      "Redeem error:",
+      error
+    );
+
+
+    setStatus(
+      "Redeem 失败\n\n" +
+      getErrorMessage(error),
+      "error"
+    );
+
+
+  } finally {
+
+    redeemBtn.disabled =
+      false;
+
+  }
+
+}
+
+
+/* =========================================================
+   MetaMask 事件
+========================================================= */
+
+if (window.ethereum) {
+
+  window.ethereum.on(
+    "accountsChanged",
+    async accounts => {
+
+      if (
+        !accounts ||
+        accounts.length === 0
+      ) {
+
+        walletAddress =
+          null;
+
+        signer =
+          null;
+
+        provider =
+          null;
+
+        walletAddressEl.textContent =
+          "未连接";
+
+        networkEl.textContent =
+          "网络：未连接";
+
+        hypeBalanceEl.textContent =
+          "-";
+
+        whypeBalanceEl.textContent =
+          "-";
+
+        transferBtn.disabled =
+          true;
+
+        if (balanceTimer) {
+
+          clearInterval(
+            balanceTimer
+          );
+
+          balanceTimer =
+            null;
+
+        }
+
+        return;
+      }
+
+
+      provider =
+        new ethers.BrowserProvider(
+          window.ethereum
+        );
+
+
+      signer =
+        await provider.getSigner();
+
+
+      walletAddress =
+        await signer.getAddress();
+
+
+      await updateUI();
+
+      await updateBalances();
+
+      startBalancePolling();
+
+    }
+  );
+
+
+  window.ethereum.on(
+    "chainChanged",
+    async () => {
+
+      provider =
+        new ethers.BrowserProvider(
+          window.ethereum
+        );
+
+
+      try {
+
+        signer =
+          await provider.getSigner();
+
+        walletAddress =
+          await signer.getAddress();
+
+      } catch (error) {
+
+        console.error(error);
+
+      }
+
+
+      await updateUI();
+
+      await updateBalances();
+
+    }
+  );
+
+}
+
+
+/* =========================================================
+   按钮
+========================================================= */
+
+connectBtn.addEventListener(
+  "click",
+  connectWallet
+);
+
+
+transferBtn.addEventListener(
+  "click",
+  transferHype
+);
+
+
+redeemBtn.addEventListener(
+  "click",
+  redeem
+);
+
+
+/* =========================================================
+   页面初始化
+========================================================= */
+
+async function init() {
+
+  if (!window.ethereum) {
+
+    setStatus(
+      "请安装 MetaMask"
+    );
+
+    return;
+  }
+
+
+  try {
+
+    const accounts =
+      await window.ethereum.request({
+        method: "eth_accounts"
+      });
+
+
+    if (
+      accounts &&
+      accounts.length > 0
+    ) {
+
+      provider =
+        new ethers.BrowserProvider(
+          window.ethereum
+        );
+
+
+      signer =
+        await provider.getSigner();
+
+
+      walletAddress =
+        await signer.getAddress();
+
+
+      await updateUI();
+
+      await updateBalances();
+
+      startBalancePolling();
+
+
+      setStatus(
+        "钱包已连接\n" +
+        walletAddress
+      );
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      "初始化失败:",
+      error
+    );
+
+  }
+
+}
+
+
+init();
+
+</script>
+
+</body>
+</html>
